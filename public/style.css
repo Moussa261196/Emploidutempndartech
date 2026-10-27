@@ -12,18 +12,30 @@ h1{font-size:1.8rem;margin:0;color:var(--nv)}h2{color:var(--nv);font-size:1.15re
 .tab,.ic,.btn{font:inherit;cursor:pointer;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:999px;padding:10px 14px;text-decoration:none;display:inline-block;transition:.2s ease}
 .tab:hover,.ic:hover,.btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(37,99,235,.08)}
 .tab.on{background:linear-gradient(135deg,var(--c),#174b8d);border-color:transparent;color:#fff;font-weight:600}
-.wk{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.wk b{flex:1;text-align:center;min-width:190px;color:var(--nv)}
+.wk{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:8px}
+.wk b{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;color:var(--nv);font-weight:750}
+.wk.current-week-navigation{padding:10px;border:2px solid var(--c);border-radius:16px;background:var(--hi)}
+.current-week-badge{display:inline-block;padding:4px 10px;border-radius:999px;background:var(--c);color:#fff;font-size:.72rem;font-weight:700;letter-spacing:.03em}
 .ic{min-width:42px;text-align:center;padding:9px 12px}
 .note,.ok,.err{padding:12px 14px;border-radius:12px;margin:0 0 18px}
 .note{background:linear-gradient(135deg,rgba(42,122,226,.08),rgba(42,122,226,.03));border-left:4px solid #2B9CD8}
 .ok{background:#d7f2e0;color:#14532d}.err{background:#fde2e2;color:#7f1d1d}
 .schedule-shell{background:var(--card);border:1px solid var(--bd);border-radius:20px;box-shadow:var(--shadow);overflow:hidden}
-.schedule-header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--bd);background:linear-gradient(180deg,#fbfcff 0%,#f6f9ff 100%)}
+.schedule-header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--bd);background:var(--card)}
+.schedule-header h2{color:var(--tx)}
 .week-meta{display:flex;flex-direction:column;gap:6px}
 .meta-label{display:block;font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;color:var(--mu);font-weight:700}
-.week-range{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
-.week-range strong{font-size:.98rem;color:var(--nv)}
+.week-range{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px 12px;width:min(100%,680px)}
+.week-range .period-label{grid-column:1/-1;display:flex;flex-direction:column;gap:3px;text-align:center;color:var(--tx)}
+.week-range .period-title{font-size:.78rem;line-height:1.4;color:var(--mu);font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.week-range .period-dates{font-size:1.04rem;line-height:1.5;font-weight:800}
+.week-range .period-prev{grid-column:1;grid-row:2}
+.week-range .period-next{grid-column:3;grid-row:2}
+.week-range .period-today{grid-column:2;grid-row:2;justify-self:center}
+.schedule-week{padding:18px 0;border-top:1px solid var(--bd)}
+.schedule-week:first-of-type{border-top:0}
+.schedule-week.current-week{margin:8px 12px;padding:20px 0;border:2px solid var(--c);border-radius:16px;background:var(--card);box-shadow:inset 4px 0 0 var(--c)}
+.schedule-week-heading{display:flex;flex-direction:column;align-items:center;gap:8px;margin:0;padding:0 24px 14px;color:var(--tx);font-size:1.12rem;font-weight:850;text-align:center}
 .formation-legend{display:flex;flex-wrap:wrap;gap:10px 20px;padding:14px 24px;border-bottom:1px solid var(--bd);background:var(--card)}
 .formation-legend span{display:inline-flex;align-items:center;gap:8px;color:var(--tx);font-size:.86rem;font-weight:600}
 .legend-mark{width:12px;height:12px;border-radius:50%;background:#0f5ac2}
@@ -71,11 +83,17 @@ input[type=checkbox]{width:auto}
 .course-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px;border:1px solid var(--bd);border-radius:10px;background:var(--bg)}
 .course-row label{display:block;margin:0}
 .course-row input{display:block;margin-top:4px;padding:7px 8px}
+.course-row input[aria-invalid=true]{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.12)}
 .course-times{display:grid;grid-template-columns:1fr 1fr;gap:7px;grid-column:1/-1}
 .course-title,.course-room{grid-column:1/-1}
 .course-row .x{grid-column:1/-1;justify-self:end;color:#a12d2d;font-size:.82rem;border:1px solid #f0caca;border-radius:7px;padding:5px 9px}
 .day-empty{margin:0;padding:9px;text-align:center;border:1px dashed var(--bd);border-radius:8px;color:var(--mu);font-size:.84rem}
 .add-course{width:100%;border-style:dashed;color:var(--c);font-weight:600}
+.add-course-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.add-course-actions .add-course{grid-column:1/-1}
+.quick-course{padding:7px;font-size:.78rem;color:var(--c)}
+.overlap-warning{margin:0;padding:8px;border-radius:7px;background:#fde2e2;color:#7f1d1d;font-size:.82rem;font-weight:600}
+.overlap-warning[hidden]{display:none}
 .x{border:0;background:none;color:#c0392b;font-size:1.1rem;cursor:pointer;padding:0 8px}
 .btn{border-radius:8px}.btn.pri{background:var(--nv);color:var(--bg);border-color:var(--nv)}.btn.s{font-size:.85rem;padding:6px 10px}
 .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin:12px 0}
@@ -88,10 +106,25 @@ input[type=checkbox]{width:auto}
 .save-button{font-weight:700;padding:12px 18px}
 .copy-week-form{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0}
 .copy-week-form span{color:var(--mu);font-size:.84rem}
+.generate-schedule-form{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin:16px 0;padding:16px;background:var(--card);border:1px solid var(--bd);border-radius:14px}
+.generate-schedule-form p{margin:5px 0 0;color:var(--mu);font-size:.86rem}
+.generate-schedule-form label{grid-column:1;margin:0;font-size:.88rem}
+.generate-schedule-form input[type=checkbox]{margin-right:6px}
+.backup-panel{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:22px 0;padding:18px;background:var(--card);border:1px solid var(--bd);border-radius:14px}
+.backup-panel h2,.backup-panel p{grid-column:1/-1}
+.backup-panel p{margin:-8px 0 2px;color:var(--mu);font-size:.88rem}
+.backup-panel form{display:flex;flex-direction:column;gap:8px}
+.backup-panel form label{margin:0}
+.backup-panel .btn{align-self:flex-start}
+.snapshot-history{margin:12px 0;padding:14px;background:var(--card);border:1px solid var(--bd);border-radius:12px}
+.snapshot-history>p{color:var(--mu);font-size:.86rem}
+.snapshot-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--bd)}
+.snapshot-item span,.snapshot-item small{display:block}
+.snapshot-item small{margin-top:3px;color:var(--mu);font-size:.78rem}
 details{margin-top:24px}
 @media (max-width:900px){
   .schedule-header{flex-direction:column;align-items:flex-start}
-  .week-range{justify-content:flex-start}
+  .week-range{width:100%}
   .ed .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:540px){
@@ -103,12 +136,23 @@ details{margin-top:24px}
   .bar{align-items:stretch}
   .bar>a{align-self:center}
   .bar form .btn{width:100%}
-  .wk{display:grid;grid-template-columns:auto 1fr auto;gap:8px}
-  .wk b{grid-column:1/-1;grid-row:1;text-align:left}
+  .wk{grid-template-columns:auto minmax(0,1fr) auto}
+  .wk b{grid-column:1/-1;grid-row:1;padding:8px 0}
+  .wk>a:first-child{grid-column:1;grid-row:2}
+  .wk>a:nth-of-type(2){grid-column:3;grid-row:2}
+  .wk>a:nth-of-type(3){grid-column:1/-1;grid-row:3;text-align:center}
   .wk .ic:last-child{grid-column:1/-1;text-align:center}
   .course-row{padding:9px}
   .copy-week-form{align-items:stretch;flex-direction:column}
   .copy-week-form .btn{width:100%}
+  .generate-schedule-form{grid-template-columns:1fr}
+  .generate-schedule-form label{grid-column:auto}
+  .generate-schedule-form .btn{width:100%}
+  .backup-panel{grid-template-columns:1fr;padding:14px}
+  .backup-panel h2,.backup-panel p{grid-column:auto}
+  .backup-panel .btn{width:100%}
+  .snapshot-item{align-items:flex-start}
+  .snapshot-item .btn{flex-shrink:0}
   .schedule-table-wrap{padding:8px}
   .schedule-table{min-width:820px}
   .schedule-table th,.schedule-table td{padding:8px}

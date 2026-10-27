@@ -2,8 +2,9 @@
 declare(strict_types=1);
 $CFG = require __DIR__ . '/../config.php';
 date_default_timezone_set($CFG['timezone']);
-const FORMS = [1 => ['Développement web', 'f1'], 2 => ['Informatique bureautique', 'f2'], 3 => ['Infographie', 'f3']];
+const FORMS = [1 => ['Développement web', 'f1'], 2 => ['Bureautique', 'f2'], 3 => ['Infographie', 'f3']];
 const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const SCHEDULE_ANCHOR = '2026-10-26';
 
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
 header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
@@ -25,6 +26,7 @@ function db(): PDO {
             CREATE TABLE IF NOT EXISTS courses(id INTEGER PRIMARY KEY, formation INTEGER NOT NULL, day TEXT NOT NULL, hs TEXT NOT NULL, he TEXT NOT NULL, title TEXT NOT NULL, room TEXT NOT NULL DEFAULT '');
             CREATE INDEX IF NOT EXISTS i_courses ON courses(formation, day);
             CREATE TABLE IF NOT EXISTS notes(week TEXT PRIMARY KEY, text TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS attempts(ip TEXT NOT NULL, at INTEGER NOT NULL);");
     }
     return $p;
@@ -36,28 +38,160 @@ function monday(?string $d = null): string {
 }
 function addd(string $d, int $n): string { return date('Y-m-d', strtotime("$d $n days")); }
 function fd(string $d): string { return date('d/m', strtotime($d)); }
+function schedule_date_label(DateTimeImmutable $date, string $weekday): string {
+    $months = [1 => 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+    return $weekday . ' ' . (int)$date->format('j') . ' ' . $months[(int)$date->format('n')];
+}
+function schedule_week_label(string $week): string {
+    $start = new DateTimeImmutable($week);
+    $end = $start->modify('+5 days');
+    $startLabel = schedule_date_label($start, 'lundi');
+    $endLabel = schedule_date_label($end, 'samedi');
+    if ($start->format('Y') !== $end->format('Y')) $startLabel .= ' ' . $start->format('Y');
+    return 'Semaine du ' . $startLabel . ' au ' . $endLabel . ' ' . $end->format('Y');
+}
+function schedule_period_label(string $start, string $end): string {
+    $startDate = new DateTimeImmutable($start);
+    $endDate = new DateTimeImmutable($end);
+    $startLabel = schedule_date_label($startDate, 'lundi');
+    $endLabel = schedule_date_label($endDate, 'samedi');
+    if ($startDate->format('Y') !== $endDate->format('Y')) $startLabel .= ' ' . $startDate->format('Y');
+    return 'Du ' . $startLabel . ' au ' . $endLabel . ' ' . $endDate->format('Y');
+}
+function schedule_week_offset(string $week): int {
+    $start = new DateTimeImmutable($week);
+    $anchor = new DateTimeImmutable(SCHEDULE_ANCHOR);
+    return intdiv((int)$anchor->diff($start)->format('%r%a'), 7);
+}
+function validate_schedule(array $courses, string $start, int $weekCount): array {
+    if ($weekCount < 1 || $weekCount > 52 || monday($start) !== $start) return ['La période de génération est invalide.'];
+    $actual = [];
+    foreach ($courses as $course) {
+        $day = (string)($course['day'] ?? '');
+        $formation = filter_var($course['formation'] ?? null, FILTER_VALIDATE_INT);
+        $hs = (string)($course['hs'] ?? '');
+        $he = (string)($course['he'] ?? '');
+        $title = trim((string)($course['title'] ?? ''));
+        if ($formation === false || !isset(FORMS[$formation]) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $day)
+            || !preg_match('/^(08:00|12:00)$/', $hs) || !preg_match('/^(12:00|16:00)$/', $he)
+            || !in_array([$hs, $he], [['08:00', '12:00'], ['12:00', '16:00']], true) || $title === '') {
+            return ['Un cours contient une formation, une date, un horaire ou un intitulé invalide.'];
+        }
+        $actual[$day][] = ['formation' => $formation, 'hs' => $hs, 'he' => $he];
+    }
+    $errors = [];
+    for ($i = 0; $i < $weekCount; $i++) {
+        $week = addd($start, 7 * $i);
+        $offset = schedule_week_offset($week);
+        $expected = [];
+        for ($day = 0; $day < 4; $day++) {
+            $date = addd($week, $day);
+            $officeMorning = $day >= 2;
+            $expected[$date] = [
+                ['formation' => 2, 'hs' => $officeMorning ? '08:00' : '12:00', 'he' => $officeMorning ? '12:00' : '16:00'],
+            ];
+            $webStarts = $offset % 2 === 0;
+            $isWebDay = ($day % 2 === 0) === $webStarts;
+            $expected[$date][] = [
+                'formation' => $isWebDay ? 1 : 3,
+                'hs' => $officeMorning ? '12:00' : '08:00',
+                'he' => $officeMorning ? '16:00' : '12:00',
+            ];
+        }
+        $fridayMorning = $offset % 2 === 0;
+        $expected[addd($week, 4)] = [[
+            'formation' => 2,
+            'hs' => $fridayMorning ? '08:00' : '12:00',
+            'he' => $fridayMorning ? '12:00' : '16:00',
+        ]];
+        $webSaturdayMorning = $offset % 2 === 0;
+        $expected[addd($week, 5)] = [
+            ['formation' => 1, 'hs' => $webSaturdayMorning ? '08:00' : '12:00', 'he' => $webSaturdayMorning ? '12:00' : '16:00'],
+            ['formation' => 3, 'hs' => $webSaturdayMorning ? '12:00' : '08:00', 'he' => $webSaturdayMorning ? '16:00' : '12:00'],
+        ];
+        foreach ($expected as $date => $sessions) {
+            $dayCourses = $actual[$date] ?? [];
+            $sort = static fn(array $a, array $b): int => [$a['formation'], $a['hs']] <=> [$b['formation'], $b['hs']];
+            usort($dayCourses, $sort);
+            usort($sessions, $sort);
+            if ($dayCourses !== $sessions) $errors[] = $date . ' : les cours ne respectent pas les formations ou créneaux attendus.';
+            for ($j = 0; $j < count($dayCourses); $j++) {
+                for ($k = $j + 1; $k < count($dayCourses); $k++) {
+                    if ($dayCourses[$j]['hs'] < $dayCourses[$k]['he'] && $dayCourses[$j]['he'] > $dayCourses[$k]['hs']) {
+                        $errors[] = $date . ' : deux formations se chevauchent.';
+                        break 2;
+                    }
+                }
+            }
+            unset($actual[$date]);
+        }
+    }
+    if ($actual) $errors[] = 'Des cours se trouvent en dehors de la période générée.';
+    return array_values(array_unique($errors));
+}
+function generate_schedule(string $start, int $weekCount = 9): array {
+    if ($weekCount < 1 || $weekCount > 52 || monday($start) !== $start) {
+        throw new InvalidArgumentException('Choisissez un lundi et une période de 1 à 52 semaines.');
+    }
+    $modules = [
+        1 => ['HTML et structure web', 'CSS et mise en page responsive', 'JavaScript et DOM', 'Projet web et intégration'],
+        2 => ['Bases de l’ordinateur et traitement de texte', 'Tableur : formules et tableaux', 'Présentation et outils collaboratifs', 'Exercices pratiques et révisions'],
+        3 => ['Design et typographie', 'Retouche et composition graphique', 'Illustration et création vectorielle', 'Affiche et projet graphique'],
+    ];
+    $courses = [];
+    for ($i = 0; $i < $weekCount; $i++) {
+        $week = addd($start, 7 * $i);
+        $offset = schedule_week_offset($week);
+        for ($day = 0; $day < 4; $day++) {
+            $officeMorning = $day >= 2;
+            $webStarts = $offset % 2 === 0;
+            $courses[] = [
+                'formation' => 2, 'day' => addd($week, $day),
+                'hs' => $officeMorning ? '08:00' : '12:00', 'he' => $officeMorning ? '12:00' : '16:00',
+                'title' => $modules[2][(($offset + $day) % count($modules[2]) + count($modules[2])) % count($modules[2])], 'room' => '',
+            ];
+            $formation = (($day % 2 === 0) === $webStarts) ? 1 : 3;
+            $courses[] = [
+                'formation' => $formation, 'day' => addd($week, $day),
+                'hs' => $officeMorning ? '12:00' : '08:00', 'he' => $officeMorning ? '16:00' : '12:00',
+                'title' => $modules[$formation][(($offset + $day) % count($modules[$formation]) + count($modules[$formation])) % count($modules[$formation])], 'room' => '',
+            ];
+        }
+        $fridayMorning = $offset % 2 === 0;
+        $courses[] = [
+            'formation' => 2, 'day' => addd($week, 4),
+            'hs' => $fridayMorning ? '08:00' : '12:00', 'he' => $fridayMorning ? '12:00' : '16:00',
+            'title' => $modules[2][(($offset + 4) % count($modules[2]) + count($modules[2])) % count($modules[2])], 'room' => '',
+        ];
+        $webSaturdayMorning = $offset % 2 === 0;
+        foreach ([1, 3] as $formation) {
+            $morning = ($formation === 1) === $webSaturdayMorning;
+            $courses[] = [
+                'formation' => $formation, 'day' => addd($week, 5),
+                'hs' => $morning ? '08:00' : '12:00', 'he' => $morning ? '12:00' : '16:00',
+                'title' => $modules[$formation][(($offset + 5) % count($modules[$formation]) + count($modules[$formation])) % count($modules[$formation])], 'room' => '',
+            ];
+        }
+    }
+    $errors = validate_schedule($courses, $start, $weekCount);
+    if ($errors) throw new LogicException('Le planning généré est invalide : ' . implode(' ', $errors));
+    return $courses;
+}
 function csrf(): string { return $_SESSION['csrf'] ??= bin2hex(random_bytes(32)); }
 function csrf_ok(): bool { $t = (string)($_SESSION['csrf'] ?? ''); return $t !== '' && hash_equals($t, (string)($_POST['csrf'] ?? '')); }
 function cut(string $s, int $n): string { return preg_match('/^.{0,' . $n . '}/su', $s, $m) ? $m[0] : substr($s, 0, $n); }
 function head(string $title): void {
-    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . h($title) . ' — NDARTECH</title><link rel="stylesheet" href="style.css"></head><body><div class="wrap"><header>'
+    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . h($title) . ' — NDARTECH</title><link rel="stylesheet" href="style.css?v=20261027"></head><body><div class="wrap"><header>'
         . '<svg width="54" height="54" viewBox="0 0 100 100" aria-hidden="true"><path d="M38 14L62 28M46 34L75 52M46 34L30 62M62 28L46 56" fill="none" stroke="#1A6BB5" stroke-width="2"/><circle cx="36" cy="12" r="10" fill="#2B9CD8"/><circle cx="64" cy="27" r="6" fill="#2B9CD8"/><circle cx="47" cy="54" r="9" fill="#2B9CD8"/><circle cx="46" cy="33" r="7" fill="#1A6BB5"/><circle cx="76" cy="52" r="14" fill="#1A6BB5"/><circle cx="29" cy="68" r="16" fill="#1A6BB5"/></svg>'
         . '<div><h1>' . h($title) . '</h1><div class="sub">NDARTECH · Au cœur du numérique</div></div></header>';
 }
 function foot(string $js = ''): void { echo '</div>' . ($js ? '<script src="' . $js . '"></script>' : '') . '</body></html>'; }
 
-/** Pré-remplit 8 semaines à partir d’un lundi (modèle de la grille initiale). */
+/** Pré-remplit neuf semaines à partir d’un lundi avec les alternances définies. */
 function seed(string $start): void {
-    $M = ['08:00', '12:00']; $A = ['12:30', '16:00'];
-    $plan = [1 => [0 => $M, 2 => $M, 3 => $M, 5 => $M], 2 => [0 => $M, 1 => $A, 2 => $M, 3 => $A, 4 => $M], 3 => [0 => $A, 1 => $M, 2 => $A, 3 => $M, 5 => $M]];
-    $top = [
-        1 => ['Introduction au web, HTML5', 'CSS3, Flexbox, Grid, responsive', 'JavaScript (bases, DOM)', 'Mini-projet : site web responsive', 'Présentation du projet et évaluation'],
-        2 => ['Bases de l’ordinateur, Word', 'Excel : formules, tableaux, graphiques', 'PowerPoint, Internet, outils collaboratifs', 'Révisions et cas pratiques', 'Évaluation finale'],
-        3 => ['Design, couleurs, typographie, Canva', 'Photoshop : retouche, calques, montage', 'Illustrator : logos, vectoriel', 'Affiches, flyers, cartes de visite', 'Projet final et évaluation'],
-    ];
-    $db = db(); $st = $db->prepare('INSERT INTO courses(formation,day,hs,he,title) VALUES(?,?,?,?,?)');
+    $courses = generate_schedule($start);
+    $db = db(); $st = $db->prepare('INSERT INTO courses(formation,day,hs,he,title,room) VALUES(?,?,?,?,?,?)');
     $db->beginTransaction();
-    foreach ([0, 0, 1, 1, 2, 2, 3, 4] as $i => $k)
-        foreach ($plan as $f => $days) foreach ($days as $d => [$a, $b]) $st->execute([$f, addd($start, 7 * $i + $d), $a, $b, $top[$f][$k]]);
+    foreach ($courses as $course) $st->execute([$course['formation'], $course['day'], $course['hs'], $course['he'], $course['title'], $course['room']]);
     $db->commit();
 }
