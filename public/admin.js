@@ -67,6 +67,9 @@ form.addEventListener('input', event => {
   const box = event.target.closest('.rows');
   if (box) validateOverlaps(box);
 });
+form.addEventListener('change', event => {
+  if (event.target.matches('select[name^="formation["]')) markDirty();
+});
 
 document.addEventListener('click', event => {
   const button = event.target.closest('[data-add], [data-add-slot], .x');

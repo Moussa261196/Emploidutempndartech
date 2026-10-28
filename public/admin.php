@@ -15,9 +15,15 @@ $scheduleWeeks = 9;
 
 function go(string $q = ''): never { header('Location: admin.php' . $q); exit; }
 function login(int $id): void { session_regenerate_id(true); $_SESSION['uid'] = $id; $_SESSION['seen'] = time(); }
-function row(string $d, array $r = ['hs' => '08:00', 'he' => '12:00', 'title' => '', 'room' => '']): string {
+function row(string $d, array $r = ['hs' => '08:00', 'he' => '12:00', 'title' => '', 'room' => '', 'formation' => 1], int $defaultFormation = 1): string {
+    $formation = (int)($r['formation'] ?? $defaultFormation);
+    $options = '';
+    foreach (FORMS as $id => [$name]) {
+        $options .= '<option value="' . $id . '"' . ($formation === $id ? ' selected' : '') . '>' . h($name) . '</option>';
+    }
     return '<div class="course-row" data-course-row><div class="course-times"><label>Début<input type="time" name="s[' . $d . '][]" value="' . h($r['hs']) . '" required></label>'
         . '<label>Fin<input type="time" name="e[' . $d . '][]" value="' . h($r['he']) . '" required></label></div>'
+        . '<label class="course-formation">Formation<select name="formation[' . $d . '][]" required>' . $options . '</select></label>'
         . '<label class="course-title">Matière ou module<input name="t[' . $d . '][]" maxlength="120" placeholder="Ex. Développement web" value="' . h($r['title']) . '" required></label>'
         . '<label class="course-room">Salle ou formateur <span>(facultatif)</span><input name="r[' . $d . '][]" maxlength="80" placeholder="Ex. Salle 2" value="' . h($r['room']) . '"></label>'
         . '<button type="button" class="x" aria-label="Supprimer ce cours" title="Supprimer ce cours">Supprimer</button></div>';
@@ -189,49 +195,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $d = addd($w, $i);
                 $starts = (array)($_POST['s'][$d] ?? []);
                 $ends = (array)($_POST['e'][$d] ?? []);
+                $formations = (array)($_POST['formation'][$d] ?? []);
                 $titles = (array)($_POST['t'][$d] ?? []);
                 $rooms = (array)($_POST['r'][$d] ?? []);
                 foreach ($starts as $k => $start) {
                     $start = (string)$start; $end = (string)($ends[$k] ?? '');
+                    $formation = filter_var($formations[$k] ?? null, FILTER_VALIDATE_INT);
                     $title = trim((string)($titles[$k] ?? '')); $room = trim((string)($rooms[$k] ?? ''));
                     if ($title === '' && $room === '') continue;
-                    $submittedCourses[$d][] = ['hs' => $start, 'he' => $end, 'title' => $title, 'room' => $room];
-                    if (!preg_match($TIME, $start) || !preg_match($TIME, $end) || $start >= $end || $title === ''
+                    $submittedCourses[$d][] = ['formation' => $formation === false ? 0 : $formation, 'hs' => $start, 'he' => $end, 'title' => $title, 'room' => $room];
+                    if ($formation === false || !isset(FORMS[$formation]) || !preg_match($TIME, $start) || !preg_match($TIME, $end) || $start >= $end || $title === ''
                         || cut($title, 120) !== $title || cut($room, 80) !== $room) {
-                        $validationErrors[] = $d . ' : vérifiez les heures, le titre et la longueur des champs.';
+                        $validationErrors[] = $d . ' : vérifiez la formation, les heures, le titre et la longueur des champs.';
                         continue;
                     }
-                    foreach ($validatedCourses[$d] ?? [] as $existing) {
-                        if ($start < $existing['he'] && $end > $existing['hs']) {
-                            $validationErrors[] = $d . ' : deux cours se chevauchent (' . $existing['hs'] . '–' . $existing['he'] . ' et ' . $start . '–' . $end . ').';
-                            break;
-                        }
-                    }
-                    $validatedCourses[$d][] = ['hs' => $start, 'he' => $end, 'title' => $title, 'room' => $room];
+                    $validatedCourses[$d][] = ['formation' => $formation, 'hs' => $start, 'he' => $end, 'title' => $title, 'room' => $room];
                 }
             }
             if (cut($submittedNote, 500) !== $submittedNote) $validationErrors[] = 'L’annonce dépasse la limite de 500 caractères.';
-            if (!$validationErrors) {
-                $candidateQuery = $db->prepare('SELECT formation,day,hs,he,title,room FROM courses WHERE day BETWEEN ? AND ? AND formation<>?');
-                $candidateQuery->execute([$w, addd($w, 5), $f]);
-                $candidate = $candidateQuery->fetchAll();
-                foreach ($validatedCourses as $day => $courses) {
-                    foreach ($courses as $course) $candidate[] = [
-                        'formation' => $f, 'day' => $day, 'hs' => $course['hs'], 'he' => $course['he'],
-                        'title' => $course['title'], 'room' => $course['room'],
-                    ];
-                }
-                $validationErrors = array_merge($validationErrors, validate_schedule($candidate, $w, 1));
+            $candidate = [];
+            foreach ($validatedCourses as $day => $courses) {
+                foreach ($courses as $course) $candidate[] = [
+                    'formation' => $course['formation'], 'day' => $day, 'hs' => $course['hs'], 'he' => $course['he'],
+                    'title' => $course['title'], 'room' => $course['room'],
+                ];
             }
+            $validationErrors = array_merge($validationErrors, validate_manual_schedule($candidate));
             if ($validationErrors) {
                 $err = 'Aucun changement enregistré. ' . implode(' ', array_slice(array_unique($validationErrors), 0, 8));
             } else {
                 $db->beginTransaction();
                 snapshot($db, 'Avant enregistrement');
-                $db->prepare('DELETE FROM courses WHERE formation=? AND day BETWEEN ? AND ?')->execute([$f, $w, addd($w, 5)]);
+                $db->prepare('DELETE FROM courses WHERE day BETWEEN ? AND ?')->execute([$w, addd($w, 5)]);
                 $ins = $db->prepare('INSERT INTO courses(formation,day,hs,he,title,room) VALUES(?,?,?,?,?,?)');
                 foreach ($validatedCourses as $day => $courses) foreach ($courses as $course)
-                    $ins->execute([$f, $day, $course['hs'], $course['he'], $course['title'], $course['room']]);
+                    $ins->execute([$course['formation'], $day, $course['hs'], $course['he'], $course['title'], $course['room']]);
                 $txt = trim($submittedNote);
                 if ($txt === '') $db->prepare('DELETE FROM notes WHERE week=?')->execute([$w]);
                 else $db->prepare('REPLACE INTO notes(week,text) VALUES(?,?)')->execute([$w, $txt]);
@@ -253,7 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'formation' => $f, 'day' => addd($row['day'], 7), 'hs' => $row['hs'], 'he' => $row['he'],
                     'title' => $row['title'], 'room' => $row['room'],
                 ];
-                $scheduleErrors = validate_schedule($candidate, $w, 1);
+                $scheduleErrors = validate_manual_schedule($candidate);
                 if ($scheduleErrors) {
                     $_SESSION['flash'] = '!Copie refusée : ' . implode(' ', $scheduleErrors);
                 } else {
@@ -297,7 +295,7 @@ if (!$uid) {
     foot(); exit;
 }
 
-$q = $db->prepare('SELECT day,hs,he,title,room FROM courses WHERE formation=? AND day BETWEEN ? AND ? ORDER BY day,hs'); $q->execute([$f, $w, addd($w, 5)]);
+$q = $db->prepare('SELECT formation,day,hs,he,title,room FROM courses WHERE day BETWEEN ? AND ? ORDER BY day,hs,formation'); $q->execute([$w, addd($w, 5)]);
 $by = []; foreach ($q as $r) $by[$r['day']][] = $r;
 $n = $db->prepare('SELECT text FROM notes WHERE week=?'); $n->execute([$w]); $note = (string)$n->fetchColumn();
 if ($submittedCourses !== null) $by = $submittedCourses;
@@ -311,13 +309,17 @@ if ($err) echo '<div class="err">' . h($err) . '</div>';
 $weekValidationQuery = $db->prepare('SELECT formation,day,hs,he,title,room FROM courses WHERE day BETWEEN ? AND ?');
 $weekValidationQuery->execute([$w, addd($w, 5)]);
 $weekSchedule = $weekValidationQuery->fetchAll();
-if ($weekSchedule && ($weekScheduleErrors = validate_schedule($weekSchedule, $w, 1))) {
-    echo '<div class="err" role="alert">Le planning enregistré cette semaine ne respecte pas toutes les règles : ' . h(implode(' ', $weekScheduleErrors)) . ' Utilisez la génération automatique pour le corriger.</div>';
+if ($weekSchedule && ($weekScheduleErrors = validate_manual_schedule($weekSchedule))) {
+    echo '<div class="err" role="alert">Le planning enregistré contient des données invalides ou des chevauchements : ' . h(implode(' ', $weekScheduleErrors)) . '</div>';
 }
 echo '<nav class="tabs">';
 foreach (FORMS as $id => [$name, $c]) echo '<a class="tab ' . $c . ($id === $f ? ' on' : '') . '" href="' . $lnk($id, $w) . '">' . h($name) . '</a>';
-echo '</nav><div class="wk' . ($w === monday() ? ' current-week-navigation' : '') . '"><a class="ic" href="' . $lnk($f, addd($w, -7)) . '" aria-label="Semaine précédente">‹</a><b>' . h(schedule_week_label($w))
-    . ($w === monday() ? '<span class="current-week-badge">Semaine en cours</span>' : '') . '</b><a class="ic" href="' . $lnk($f, addd($w, 7)) . '" aria-label="Semaine suivante">›</a><a class="ic" href="' . $lnk($f, $defaultWeek) . '">' . $weekShortcut . '</a></div>';
+echo '</nav><nav class="week-nav' . ($w === monday() ? ' current-week-navigation' : '') . '" aria-label="Navigation entre les semaines">'
+    . '<a class="week-nav-arrow" href="' . $lnk($f, addd($w, -7)) . '" aria-label="Semaine précédente" title="Afficher la semaine précédente"><span class="week-nav-icon" aria-hidden="true">←</span><span class="week-nav-label">Semaine précédente</span></a>'
+    . '<div class="week-nav-current"><strong>' . h(schedule_week_label($w)) . '</strong>'
+    . ($w === monday() ? '<span class="current-week-badge">Semaine en cours</span>' : '') . '</div>'
+    . '<a class="week-nav-arrow" href="' . $lnk($f, addd($w, 7)) . '" aria-label="Semaine suivante" title="Afficher la semaine suivante"><span class="week-nav-label">Semaine suivante</span><span class="week-nav-icon" aria-hidden="true">→</span></a>'
+    . '<a class="week-nav-today" href="' . $lnk($f, $defaultWeek) . '" title="Revenir à la semaine actuelle">' . h($weekShortcut) . '</a></nav>';
 $periodCountQuery = $db->prepare('SELECT COUNT(*) FROM courses WHERE day BETWEEN ? AND ?');
 $periodCountQuery->execute([$w, $scheduleEnd]);
 $periodCourseCount = (int)$periodCountQuery->fetchColumn();
@@ -329,17 +331,17 @@ $currentCountQuery = $db->prepare('SELECT COUNT(*) FROM courses WHERE formation=
 $currentCountQuery->execute([$f, $w, addd($w, 5)]);
 $currentCourseCount = (int)$currentCountQuery->fetchColumn();
 $snapshots = $db->query('SELECT id,created_at,action FROM snapshots ORDER BY id DESC LIMIT 10')->fetchAll();
-echo '<form method="post" class="ed" data-edit-form>' . $tok . $ctx . '<input type="hidden" name="a" value="save"><label class="announcement-label">Annonce de la semaine <span>(visible par tous les inscrits)</span><textarea name="note" rows="2" maxlength="500" placeholder="Informations utiles pour cette semaine…">' . h($note) . '</textarea></label><div class="editor-intro"><h2>Modifier les cours</h2><p>Ajoutez, corrigez ou supprimez les cours, puis enregistrez les changements.</p></div><div class="grid ' . FORMS[$f][1] . '">';
+echo '<form method="post" class="ed" data-edit-form>' . $tok . $ctx . '<input type="hidden" name="a" value="save"><label class="announcement-label">Annonce de la semaine <span>(visible par tous les inscrits)</span><textarea name="note" rows="2" maxlength="500" placeholder="Informations utiles pour cette semaine…">' . h($note) . '</textarea></label><div class="editor-intro"><h2>Modifier les cours</h2><p>Vous pouvez modifier librement les formations, horaires, matières et salles. Les données doivent rester valides et les cours ne doivent pas se chevaucher ; une sauvegarde automatique est créée avant chaque enregistrement.</p></div><div class="grid ' . FORMS[$f][1] . '">';
 foreach (DAYS as $i => $name) {
     $d = addd($w, $i);
     echo '<section class="day editor-day"><div class="dh"><span class="day-name">' . $name . '<small>' . fd($d) . '</small></span><span class="course-count" data-count-for="' . $d . '"></span></div><div class="rows" data-d="' . $d . '">';
     foreach ($by[$d] ?? [] as $r) echo row($d, $r);
     echo '</div><p class="overlap-warning" data-overlap-for="' . $d . '" aria-live="polite" hidden></p><div class="add-course-actions"><button type="button" class="btn add-course" data-add="' . $d . '">+ Ajouter un cours</button><button type="button" class="btn quick-course" data-add-slot="08:00|12:00" data-day="' . $d . '">+ Matin</button><button type="button" class="btn quick-course" data-add-slot="12:00|16:00" data-day="' . $d . '">+ Après-midi</button></div></section>';
 }
-echo '</div><div class="act"><span class="save-status" data-save-status aria-live="polite">Tout est enregistré</span><button class="btn pri save-button">Enregistrer les modifications</button></div></form><template id="tpl">' . row('__D__') . '</template>';
+echo '</div><div class="act"><span class="save-status" data-save-status aria-live="polite">Tout est enregistré</span><button class="btn pri save-button">Enregistrer les modifications</button></div></form><template id="tpl">' . row('__D__', ['hs' => '08:00', 'he' => '12:00', 'title' => '', 'room' => '', 'formation' => $f], $f) . '</template>';
 echo '<form method="post" class="generate-schedule-form" data-generate-form data-existing-count="' . $periodCourseCount . '">' . $tok . $ctx
     . '<input type="hidden" name="a" value="generate"><input type="hidden" name="confirm_generate" value="yes">'
-    . '<div><strong>Générer automatiquement neuf semaines</strong><p>Le développement web et l’infographie ont chacun un cours à 08h et un cours à 12h du lundi au jeudi. Leur attribution du matin et de l’après-midi s’inverse chaque semaine. La bureautique occupe l’après-midi lundi et mardi, puis le matin mercredi et jeudi.</p><p>La semaine 1 commence le lundi ' . fd(SCHEDULE_ANCHOR) . ' 2026.</p></div>'
+    . '<div><strong>Générer automatiquement neuf semaines</strong><p>Cette action recrée le planning selon les alternances établies. Pour ajuster les cours vous-même, utilisez le formulaire hebdomadaire ci-dessus. Une sauvegarde automatique est créée avant toute régénération.</p><p>La semaine 1 commence le lundi ' . fd(SCHEDULE_ANCHOR) . ' 2026.</p></div>'
     . '<label><input type="checkbox" name="replace_existing" value="yes"> Remplacer les ' . $periodCourseCount . ' cours existants de cette période (une sauvegarde sera créée)</label>'
     . '<button class="btn pri">Générer le planning</button></form>';
 echo '<form method="post" class="copy-week-form" data-copy-form data-previous-count="' . $previousCourseCount . '" data-current-count="' . $currentCourseCount . '">' . $tok . $ctx . '<input type="hidden" name="a" value="copy"><input type="hidden" name="confirm_copy" value="yes"><button class="btn">Copier la semaine précédente</button><span>À copier : ' . $previousCourseCount . ' cours. Cette action remplacera les ' . $currentCourseCount . ' cours de la semaine affichée.</span></form>';

@@ -83,38 +83,63 @@ function validate_schedule(array $courses, string $start, int $weekCount): array
     for ($i = 0; $i < $weekCount; $i++) {
         $week = addd($start, 7 * $i);
         $offset = schedule_week_offset($week);
-        $expected = [];
+        $weekCourses = [];
         for ($day = 0; $day < 4; $day++) {
             $date = addd($week, $day);
-            $officeMorning = $day >= 2;
-            $expected[$date] = [
-                ['formation' => 2, 'hs' => $officeMorning ? '08:00' : '12:00', 'he' => $officeMorning ? '12:00' : '16:00'],
-            ];
+            $dayCourses = $actual[$date] ?? [];
+            $weekCourses = array_merge($weekCourses, $dayCourses);
+            if (count($dayCourses) !== 2) {
+                $errors[] = $date . ' : deux cours sont requis, bureautique et une autre formation.';
+                continue;
+            }
+            $officeCourses = array_values(array_filter($dayCourses, static fn(array $course): bool => $course['formation'] === 2));
+            $alternatingCourses = array_values(array_filter($dayCourses, static fn(array $course): bool => in_array($course['formation'], [1, 3], true)));
+            if (count($officeCourses) !== 1 || count($alternatingCourses) !== 1) {
+                $errors[] = $date . ' : une séance de bureautique et une séance de développement web ou d’infographie sont requises.';
+                continue;
+            }
             $webStarts = $offset % 2 === 0;
             $isWebDay = ($day % 2 === 0) === $webStarts;
-            $expected[$date][] = [
-                'formation' => $isWebDay ? 1 : 3,
-                'hs' => $officeMorning ? '12:00' : '08:00',
-                'he' => $officeMorning ? '16:00' : '12:00',
-            ];
+            if ($alternatingCourses[0]['formation'] !== ($isWebDay ? 1 : 3)) {
+                $errors[] = $date . ' : l’alternance entre le développement web et l’infographie n’est pas respectée.';
+            }
+            if ($officeCourses[0]['hs'] === $alternatingCourses[0]['hs']) {
+                $errors[] = $date . ' : les deux formations doivent occuper des créneaux différents.';
+            }
         }
-        $fridayMorning = $offset % 2 === 0;
-        $expected[addd($week, 4)] = [[
-            'formation' => 2,
-            'hs' => $fridayMorning ? '08:00' : '12:00',
-            'he' => $fridayMorning ? '12:00' : '16:00',
-        ]];
+        $officeMonday = array_values(array_filter($actual[$week] ?? [], static fn(array $course): bool => $course['formation'] === 2));
+        $expectedOfficeMonday = $offset % 2 === 0 ? '12:00' : '08:00';
+        if (count($officeMonday) !== 1 || $officeMonday[0]['hs'] !== $expectedOfficeMonday) {
+            $errors[] = $week . ' : le créneau du lundi de la bureautique doit alterner chaque semaine.';
+        }
+        $officeWeekSlots = array_column(array_filter($weekCourses, static fn(array $course): bool => $course['formation'] === 2), 'hs');
+        if (!in_array('08:00', $officeWeekSlots, true) || !in_array('12:00', $officeWeekSlots, true)) {
+            $errors[] = $week . ' : la bureautique doit avoir des cours le matin et l’après-midi du lundi au jeudi.';
+        }
+        foreach ([1, 3] as $formation) {
+            $formationSlots = array_column(array_filter($weekCourses, static fn(array $course): bool => $course['formation'] === $formation), 'hs');
+            if (!in_array('08:00', $formationSlots, true) || !in_array('12:00', $formationSlots, true)) {
+                $errors[] = $week . ' : le développement web et l’infographie doivent chacun avoir un cours le matin et l’après-midi.';
+                break;
+            }
+        }
+        $friday = $actual[addd($week, 4)] ?? [];
+        if (count($friday) !== 1 || $friday[0]['formation'] !== 2 || $friday[0]['hs'] !== '08:00' || $friday[0]['he'] !== '12:00') {
+            $errors[] = addd($week, 4) . ' : le vendredi doit comporter uniquement la bureautique de 08h à 12h.';
+        }
         $webSaturdayMorning = $offset % 2 === 0;
-        $expected[addd($week, 5)] = [
-            ['formation' => 1, 'hs' => $webSaturdayMorning ? '08:00' : '12:00', 'he' => $webSaturdayMorning ? '12:00' : '16:00'],
-            ['formation' => 3, 'hs' => $webSaturdayMorning ? '12:00' : '08:00', 'he' => $webSaturdayMorning ? '16:00' : '12:00'],
-        ];
-        foreach ($expected as $date => $sessions) {
+        $saturdayDate = addd($week, 5);
+        $saturday = $actual[$saturdayDate] ?? [];
+        $saturdayByFormation = [];
+        foreach ($saturday as $course) $saturdayByFormation[$course['formation']] = $course;
+        if (count($saturday) !== 2 || !isset($saturdayByFormation[1], $saturdayByFormation[3])
+            || $saturdayByFormation[1]['hs'] === $saturdayByFormation[3]['hs']
+            || $saturdayByFormation[1]['hs'] !== ($webSaturdayMorning ? '08:00' : '12:00')) {
+            $errors[] = $saturdayDate . ' : le développement web et l’infographie doivent partager les deux créneaux du samedi, en alternant chaque semaine.';
+        }
+        for ($day = 0; $day < 6; $day++) {
+            $date = addd($week, $day);
             $dayCourses = $actual[$date] ?? [];
-            $sort = static fn(array $a, array $b): int => [$a['formation'], $a['hs']] <=> [$b['formation'], $b['hs']];
-            usort($dayCourses, $sort);
-            usort($sessions, $sort);
-            if ($dayCourses !== $sessions) $errors[] = $date . ' : les cours ne respectent pas les formations ou créneaux attendus.';
             for ($j = 0; $j < count($dayCourses); $j++) {
                 for ($k = $j + 1; $k < count($dayCourses); $k++) {
                     if ($dayCourses[$j]['hs'] < $dayCourses[$k]['he'] && $dayCourses[$j]['he'] > $dayCourses[$k]['hs']) {
@@ -128,6 +153,29 @@ function validate_schedule(array $courses, string $start, int $weekCount): array
     }
     if ($actual) $errors[] = 'Des cours se trouvent en dehors de la période générée.';
     return array_values(array_unique($errors));
+}
+function validate_manual_schedule(array $courses): array {
+    $byDay = [];
+    foreach ($courses as $course) {
+        $day = (string)($course['day'] ?? '');
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $day);
+        $formation = filter_var($course['formation'] ?? null, FILTER_VALIDATE_INT);
+        $start = (string)($course['hs'] ?? '');
+        $end = (string)($course['he'] ?? '');
+        $title = trim((string)($course['title'] ?? ''));
+        if (!$date || $date->format('Y-m-d') !== $day || $formation === false || !isset(FORMS[$formation])
+            || !preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $start)
+            || !preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $end) || $start >= $end || $title === '') {
+            return ['Un cours contient une formation, une date, un horaire ou un intitulé invalide.'];
+        }
+        foreach ($byDay[$day] ?? [] as $existing) {
+            if ($start < $existing['he'] && $end > $existing['hs']) {
+                $errors[] = $day . ' : deux cours se chevauchent (' . $existing['hs'] . '–' . $existing['he'] . ' et ' . $start . '–' . $end . ').';
+            }
+        }
+        $byDay[$day][] = ['hs' => $start, 'he' => $end];
+    }
+    return array_values(array_unique($errors ?? []));
 }
 function generate_schedule(string $start, int $weekCount = 9): array {
     if ($weekCount < 1 || $weekCount > 52 || monday($start) !== $start) {
@@ -143,7 +191,7 @@ function generate_schedule(string $start, int $weekCount = 9): array {
         $week = addd($start, 7 * $i);
         $offset = schedule_week_offset($week);
         for ($day = 0; $day < 4; $day++) {
-            $officeMorning = $day >= 2;
+            $officeMorning = ($day >= 2) === ($offset % 2 === 0);
             $webStarts = $offset % 2 === 0;
             $courses[] = [
                 'formation' => 2, 'day' => addd($week, $day),
@@ -157,10 +205,9 @@ function generate_schedule(string $start, int $weekCount = 9): array {
                 'title' => $modules[$formation][(($offset + $day) % count($modules[$formation]) + count($modules[$formation])) % count($modules[$formation])], 'room' => '',
             ];
         }
-        $fridayMorning = $offset % 2 === 0;
         $courses[] = [
             'formation' => 2, 'day' => addd($week, 4),
-            'hs' => $fridayMorning ? '08:00' : '12:00', 'he' => $fridayMorning ? '12:00' : '16:00',
+            'hs' => '08:00', 'he' => '12:00',
             'title' => $modules[2][(($offset + 4) % count($modules[2]) + count($modules[2])) % count($modules[2])], 'room' => '',
         ];
         $webSaturdayMorning = $offset % 2 === 0;
@@ -181,7 +228,7 @@ function csrf(): string { return $_SESSION['csrf'] ??= bin2hex(random_bytes(32))
 function csrf_ok(): bool { $t = (string)($_SESSION['csrf'] ?? ''); return $t !== '' && hash_equals($t, (string)($_POST['csrf'] ?? '')); }
 function cut(string $s, int $n): string { return preg_match('/^.{0,' . $n . '}/su', $s, $m) ? $m[0] : substr($s, 0, $n); }
 function head(string $title): void {
-    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . h($title) . ' — NDARTECH</title><link rel="stylesheet" href="style.css?v=20261027"></head><body><div class="wrap"><header>'
+    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . h($title) . ' — NDARTECH</title><link rel="stylesheet" href="style.css?v=20261027-3"></head><body><div class="wrap"><header>'
         . '<svg width="54" height="54" viewBox="0 0 100 100" aria-hidden="true"><path d="M38 14L62 28M46 34L75 52M46 34L30 62M62 28L46 56" fill="none" stroke="#1A6BB5" stroke-width="2"/><circle cx="36" cy="12" r="10" fill="#2B9CD8"/><circle cx="64" cy="27" r="6" fill="#2B9CD8"/><circle cx="47" cy="54" r="9" fill="#2B9CD8"/><circle cx="46" cy="33" r="7" fill="#1A6BB5"/><circle cx="76" cy="52" r="14" fill="#1A6BB5"/><circle cx="29" cy="68" r="16" fill="#1A6BB5"/></svg>'
         . '<div><h1>' . h($title) . '</h1><div class="sub">NDARTECH · Au cœur du numérique</div></div></header>';
 }

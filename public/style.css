@@ -12,9 +12,14 @@ h1{font-size:1.8rem;margin:0;color:var(--nv)}h2{color:var(--nv);font-size:1.15re
 .tab,.ic,.btn{font:inherit;cursor:pointer;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:999px;padding:10px 14px;text-decoration:none;display:inline-block;transition:.2s ease}
 .tab:hover,.ic:hover,.btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(37,99,235,.08)}
 .tab.on{background:linear-gradient(135deg,var(--c),#174b8d);border-color:transparent;color:#fff;font-weight:600}
-.wk{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:8px}
-.wk b{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;color:var(--nv);font-weight:750}
-.wk.current-week-navigation{padding:10px;border:2px solid var(--c);border-radius:16px;background:var(--hi)}
+.week-nav{display:grid;grid-template-columns:minmax(170px,1fr) minmax(240px,2fr) minmax(170px,1fr) auto;align-items:center;gap:10px;margin:12px 0 18px}
+.week-nav.current-week-navigation{padding:10px;border:2px solid var(--c);border-radius:16px;background:var(--hi)}
+.week-nav-arrow,.week-nav-today{display:flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:8px 14px;border:1px solid var(--bd);border-radius:14px;background:var(--card);color:var(--tx);font:inherit;font-weight:650;text-align:center;text-decoration:none;transition:.2s ease}
+.week-nav-arrow:hover,.week-nav-today:hover{border-color:var(--c);color:var(--c);box-shadow:0 6px 16px rgba(37,99,235,.1)}
+.week-nav-icon{font-size:1.55rem;line-height:1;color:var(--c)}
+.week-nav-current{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;color:var(--tx)}
+.week-nav-current strong{font-size:1rem}
+.week-nav-today{white-space:nowrap}
 .current-week-badge{display:inline-block;padding:4px 10px;border-radius:999px;background:var(--c);color:#fff;font-size:.72rem;font-weight:700;letter-spacing:.03em}
 .ic{min-width:42px;text-align:center;padding:9px 12px}
 .note,.ok,.err{padding:12px 14px;border-radius:12px;margin:0 0 18px}
@@ -55,6 +60,7 @@ h1{font-size:1.8rem;margin:0;color:var(--nv)}h2{color:var(--nv);font-size:1.15re
 .schedule-table thead th.today{background:linear-gradient(180deg,var(--c) 0%,#174b8d 100%);color:#fff}
 .schedule-table thead th.today small{color:rgba(255,255,255,.8)}
 .schedule-table tbody tr:hover td,.schedule-table tbody tr:hover th.time-cell{background-color:var(--hi)}
+.schedule-mobile{display:none}
 .session{margin:0;padding:12px 10px;border-radius:12px;border:1px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-height:74px;box-shadow:0 6px 16px rgba(31,42,55,.04)}
 .session-0{background:linear-gradient(180deg,#eaf3ff 0%,#edf6ff 100%);border-color:#d5e7ff;color:#0f5ac2}
 .session-1{background:linear-gradient(180deg,#ebfbf5 0%,#f1fff8 100%);border-color:#ccefe0;color:#0f7a57}
@@ -64,7 +70,7 @@ h1{font-size:1.8rem;margin:0;color:var(--nv)}h2{color:var(--nv);font-size:1.15re
 .no-course{color:#a0a8b8;font-size:1.1rem}
 .empty-week{padding:36px!important;color:var(--mu);font-style:italic}
 label{display:block;margin:10px 0;font-weight:600}
-input,textarea{font:inherit;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx);min-width:0;width:100%;box-sizing:border-box}
+input,textarea,select{font:inherit;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx);min-width:0;width:100%;box-sizing:border-box}
 input[type=checkbox]{width:auto}
 .row{display:grid;grid-template-columns:1fr 1fr auto;gap:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed var(--bd)}
 .row .w3{grid-column:1/-1}
@@ -83,6 +89,8 @@ input[type=checkbox]{width:auto}
 .course-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px;border:1px solid var(--bd);border-radius:10px;background:var(--bg)}
 .course-row label{display:block;margin:0}
 .course-row input{display:block;margin-top:4px;padding:7px 8px}
+.course-row select{display:block;margin-top:4px;padding:7px 8px}
+.course-formation{grid-column:1/-1}
 .course-row input[aria-invalid=true]{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.12)}
 .course-times{display:grid;grid-template-columns:1fr 1fr;gap:7px;grid-column:1/-1}
 .course-title,.course-room{grid-column:1/-1}
@@ -122,26 +130,63 @@ input[type=checkbox]{width:auto}
 .snapshot-item span,.snapshot-item small{display:block}
 .snapshot-item small{margin-top:3px;color:var(--mu);font-size:.78rem}
 details{margin-top:24px}
+button,a,input,select,textarea{touch-action:manipulation}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--c);outline-offset:3px}
 @media (max-width:900px){
   .schedule-header{flex-direction:column;align-items:flex-start}
   .week-range{width:100%}
+  .week-nav{grid-template-columns:minmax(0,1fr) minmax(220px,1.5fr) minmax(0,1fr)}
+  .week-nav-today{grid-column:1/-1;justify-self:center}
   .ed .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+@media (max-width:760px){
+  .schedule-table-wrap{display:none}
+  .schedule-mobile{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 12px}
+  .schedule-day-card{min-width:0;padding:12px;border:1px solid var(--bd);border-radius:14px;background:var(--card)}
+  .schedule-day-card h4{display:flex;justify-content:space-between;gap:8px;margin:0 0 10px;color:var(--tx);font-size:.9rem}
+  .schedule-day-card h4 time{color:var(--mu);font-size:.82rem;font-weight:600}
+  .mobile-session{display:flex;flex-direction:column;gap:3px;margin-top:8px;padding:9px 10px;border:1px solid var(--bd);border-left:4px solid var(--c);border-radius:9px;background:var(--bg);overflow-wrap:anywhere}
+  .mobile-session time{font-size:.76rem;font-weight:750;color:var(--mu)}
+  .mobile-session span{font-size:.84rem;font-weight:700;color:var(--tx)}
+  .mobile-session.session-0{border-left-color:#1A6BB5}
+  .mobile-session.session-1{border-left-color:#2E8B57}
+  .mobile-session.session-2{border-left-color:#D9822B}
+  .schedule-day-empty{margin:0;color:var(--mu);font-size:.82rem}
+  .schedule-week.current-week{margin:8px;padding:16px 0}
+  .schedule-week-heading{padding-right:14px;padding-left:14px;font-size:1rem}
+  .formation-legend{padding:12px 16px}
+  .week-nav{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,1fr)}
+  .week-nav-arrow{min-width:0;padding:8px}
+  .week-nav-label{font-size:.82rem}
+  .schedule-header{padding:18px 16px}
+  .period-dates{overflow-wrap:anywhere}
+}
 @media (max-width:540px){
-  .wrap{padding-left:12px;padding-right:12px}
+  .wrap{padding:14px 12px 24px}
   .ed .grid{grid-template-columns:1fr}
-  header{gap:9px}
-  header svg{width:44px;height:44px}
-  h1{font-size:1.35rem}
+  header{gap:9px;padding-bottom:12px;margin-bottom:14px}
+  header svg{width:40px;height:40px}
+  h1{font-size:clamp(1.2rem,6vw,1.5rem)}
+  .sub{font-size:.78rem}
+  .tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:10px 0 14px}
+  .tab{width:auto;min-height:44px;padding:10px 8px;text-align:center;font-size:.88rem}
+  .week-meta{width:100%}
+  .week-range{grid-template-columns:44px minmax(0,1fr) 44px;gap:8px;width:100%}
+  .week-range .period-dates{font-size:.94rem}
+  .week-range .period-today{grid-column:1/-1;grid-row:3}
+  .schedule-header{align-items:stretch;padding:16px 14px}
+  .schedule-shell{border-radius:16px}
+  .schedule-mobile{gap:8px;padding:0 8px}
+  .schedule-day-card{padding:10px}
+  .mobile-session{padding:8px}
   .bar{align-items:stretch}
   .bar>a{align-self:center}
   .bar form .btn{width:100%}
-  .wk{grid-template-columns:auto minmax(0,1fr) auto}
-  .wk b{grid-column:1/-1;grid-row:1;padding:8px 0}
-  .wk>a:first-child{grid-column:1;grid-row:2}
-  .wk>a:nth-of-type(2){grid-column:3;grid-row:2}
-  .wk>a:nth-of-type(3){grid-column:1/-1;grid-row:3;text-align:center}
-  .wk .ic:last-child{grid-column:1/-1;text-align:center}
+  .week-nav{grid-template-columns:1fr 1fr;gap:8px}
+  .week-nav-current{grid-column:1/-1;grid-row:1;padding:8px 0}
+  .week-nav-arrow{min-width:0;padding:8px}
+  .week-nav-label{font-size:.84rem}
+  .week-nav-today{grid-column:1/-1;grid-row:3}
   .course-row{padding:9px}
   .copy-week-form{align-items:stretch;flex-direction:column}
   .copy-week-form .btn{width:100%}
@@ -153,14 +198,13 @@ details{margin-top:24px}
   .backup-panel .btn{width:100%}
   .snapshot-item{align-items:flex-start}
   .snapshot-item .btn{flex-shrink:0}
-  .schedule-table-wrap{padding:8px}
-  .schedule-table{min-width:820px}
-  .schedule-table th,.schedule-table td{padding:8px}
-  .schedule-table tbody th.time-cell{width:120px;font-size:.8rem}
-  .session{min-height:66px;padding:9px 7px}
-  .session-title{font-size:.88rem}
-  .tabs{display:grid;grid-template-columns:1fr}
-  .tab{width:100%;text-align:center}
   .act{margin-left:-12px;margin-right:-12px;padding:10px 12px}
   .save-button{width:100%}
+}
+@media (max-width:380px){
+  .schedule-mobile{grid-template-columns:1fr}
+  .week-nav{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .week-nav-current{grid-column:1/-1;grid-row:1}
+  .week-nav-today{grid-row:3}
+  .week-range .period-dates{font-size:.88rem}
 }
