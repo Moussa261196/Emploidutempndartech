@@ -23,5 +23,14 @@ Tests de génération du planning : `php tests/schedule_generation_test.php`.
 
 Nginx : servez `public/` avec `fastcgi_pass` vers PHP-FPM et ajoutez `location ~ ^/(app|data)/ { deny all; }` si ces dossiers sont dans la racine web.
 
+## Hébergement InfinityFree avec MySQL
+
+1. Téléversez le contenu de `final-deploy/` directement dans `htdocs/`. `index.php` doit se trouver à la racine de `htdocs/`.
+2. Modifiez `config.php` sur le serveur avec le serveur, l’utilisateur, le mot de passe et la base MySQL InfinityFree.
+3. Modifiez `setup_key` en utilisant une longue phrase secrète différente pour la première création du compte administrateur.
+4. Importez les tables MySQL depuis phpMyAdmin si elles ne sont pas encore créées.
+5. Ouvrez `https://votre-domaine/admin.php`, créez ou vérifiez le compte administrateur, puis testez la page publique à la racine.
+6. Ne téléversez jamais le dossier `data/`, les sauvegardes SQLite, les outils locaux ou les mots de passe MySQL dans un dépôt public.
+
 ## Sécurité intégrée
 Mots de passe hachés (`password_hash`), sessions HTTP-only avec expiration à 2 h d’inactivité, jeton CSRF sur chaque formulaire, requêtes préparées, limite de 5 tentatives de connexion par 15 min et par adresse IP, en-têtes CSP, aucun script en ligne. Mot de passe oublié : supprimez la ligne de la table `users` dans `data/edt.sqlite`, puis recréez le compte sur `admin.php`.

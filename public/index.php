@@ -36,7 +36,7 @@ foreach ($n as $note) $weeks[$note['week']]['note'] = $note['text'];
 $url = fn(int $ff, string $ww) => h('?f=' . $ff . '&w=' . $ww);
 $today = date('Y-m-d');
 $weekShortcut = (int)date('N') >= 6 ? 'Semaine prochaine' : 'Aujourd’hui';
-head('Emploi du temps');
+head('NDARTECH — Emploi du temps des formations');
 echo '<nav class="tabs">';
 echo '<a class="tab' . ($f === 0 ? ' on' : '') . '" href="' . $url(0, $w) . '">Toutes les formations</a>';
 foreach (FORMS as $id => [$name, $c]) echo '<a class="tab ' . $c . ($id === $f ? ' on' : '') . '" href="' . $url($id, $w) . '">' . h($name) . '</a>';

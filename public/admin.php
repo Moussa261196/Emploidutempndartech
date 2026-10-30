@@ -5,6 +5,8 @@ $hasAdmin = (bool)$db->query('SELECT 1 FROM users LIMIT 1')->fetchColumn();
 if (isset($_SESSION['uid']) && time() - ($_SESSION['seen'] ?? 0) > 7200) { $_SESSION = []; session_regenerate_id(true); }
 $uid = $_SESSION['uid'] ?? null;
 if ($uid) $_SESSION['seen'] = time();
+$account = $uid ? currentAccount($db, (int)$uid) : [];
+$isSuperAdmin = (($account['role'] ?? '') === 'super_admin');
 $err = '';
 $flash = (string)($_SESSION['flash'] ?? ''); unset($_SESSION['flash']);
 $submittedCourses = null;
@@ -28,6 +30,11 @@ function row(string $d, array $r = ['hs' => '08:00', 'he' => '12:00', 'title' =>
         . '<label class="course-room">Salle ou formateur <span>(facultatif)</span><input name="r[' . $d . '][]" maxlength="80" placeholder="Ex. Salle 2" value="' . h($r['room']) . '"></label>'
         . '<button type="button" class="x" aria-label="Supprimer ce cours" title="Supprimer ce cours">Supprimer</button></div>';
 }
+function currentAccount(PDO $db, int $uid): array {
+    $query = $db->prepare('SELECT id,email,role FROM users WHERE id=?');
+    $query->execute([$uid]);
+    return $query->fetch() ?: [];
+}
 function snapshot(PDO $db, string $action): void {
     $payload = [
         'format' => 'ndartech-edt-backup',
@@ -38,7 +45,15 @@ function snapshot(PDO $db, string $action): void {
     ];
     $insert = $db->prepare('INSERT INTO snapshots(created_at,action,payload) VALUES(?,?,?)');
     $insert->execute([date(DATE_ATOM), $action, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)]);
-    $db->exec('DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT 20)');
+    $ids = $db->query('SELECT id FROM snapshots ORDER BY id DESC LIMIT 20')->fetchAll(PDO::FETCH_COLUMN);
+    $keep = count($ids);
+    if ($keep > 0) {
+        $placeholders = implode(',', array_fill(0, $keep, '?'));
+        $delete = $db->prepare('DELETE FROM snapshots WHERE id NOT IN (' . $placeholders . ')');
+        $delete->execute($ids);
+    } else {
+        $db->exec('DELETE FROM snapshots');
+    }
 }
 $f = (int)($_GET['f'] ?? $_POST['f'] ?? 1); if (!isset(FORMS[$f])) $f = 1;
 $w = monday($_GET['w'] ?? $_POST['w'] ?? $defaultWeek);
@@ -56,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) $err = 'Adresse email invalide.';
         elseif (strlen($pw) < 10 || $pw !== (string)($_POST['pw2'] ?? '')) $err = 'Mot de passe : 10 caractères minimum, identique dans les deux champs.';
         else {
-            $db->prepare('INSERT INTO users(email,hash) VALUES(?,?)')->execute([$email, password_hash($pw, PASSWORD_DEFAULT)]);
+            $db->prepare('INSERT INTO users(email,hash,role) VALUES(?,?,?)')->execute([$email, password_hash($pw, PASSWORD_DEFAULT), 'super_admin']);
             $id = (int)$db->lastInsertId();
             if (!empty($_POST['seed'])) seed(monday((string)($_POST['start'] ?? '')));
             login($id); $_SESSION['flash'] = 'Compte administrateur créé.'; go();
@@ -69,18 +84,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         else {
             $s = $db->prepare('SELECT id,hash FROM users WHERE email=?'); $s->execute([strtolower(trim((string)($_POST['email'] ?? '')))]); $u = $s->fetch();
             $okpw = password_verify($pw, $u['hash'] ?? '$2y$10$' . str_repeat('a', 53));
-            if ($u && $okpw) { $db->prepare('DELETE FROM attempts WHERE ip=?')->execute([$ip]); login((int)$u['id']); go(); }
+            if ($u && $okpw) { $db->prepare('DELETE FROM attempts WHERE ip=?')->execute([$ip]); $db->prepare('UPDATE users SET last_login_at=? WHERE id=?')->execute([date(DATE_ATOM), (int)$u['id']]); activity($db, (int)$u['id'], strtolower(trim((string)($_POST['email'] ?? ''))), 'Connexion administrateur', 'Connexion réussie'); login((int)$u['id']); go(); }
             $db->prepare('INSERT INTO attempts(ip,at) VALUES(?,?)')->execute([$ip, time()]);
             $err = 'Email ou mot de passe incorrect.';
         }
     } elseif ($uid) {
-        if ($a === 'logout') { $_SESSION = []; session_regenerate_id(true); go(); }
+        if ($a === 'logout') { activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Déconnexion administrateur', 'Session fermée'); $_SESSION = []; session_regenerate_id(true); go(); }
+        if ($a === 'add_user' && $isSuperAdmin) {
+            $email = strtolower(trim((string)($_POST['email'] ?? '')));
+            $role = (string)($_POST['role'] ?? 'editor');
+            $newPassword = (string)($_POST['new_password'] ?? '');
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $err = 'Adresse email invalide pour le nouvel utilisateur.';
+            elseif (!in_array($role, ['super_admin', 'editor'], true)) $err = 'Rôle invalide.';
+            elseif (strlen($newPassword) < 10) $err = 'Le mot de passe de l’utilisateur doit contenir au moins 10 caractères.';
+            else {
+                try {
+                    $db->prepare('INSERT INTO users(email,hash,role) VALUES(?,?,?)')->execute([$email, password_hash($newPassword, PASSWORD_DEFAULT), $role]);
+                    activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Création d’un compte', 'Compte ' . $email . ' créé avec le rôle ' . $role);
+                    $_SESSION['flash'] = 'Compte administrateur créé.'; go($back);
+                } catch (PDOException $exception) { $err = 'Ce compte existe déjà ou ne peut pas être créé.'; }
+            }
+        }
+        if ($a === 'set_role' && $isSuperAdmin) {
+            $targetId = (int)($_POST['user_id'] ?? 0);
+            $role = (string)($_POST['role'] ?? 'editor');
+            if ($targetId === (int)$uid && $role !== 'super_admin') $err = 'Vous ne pouvez pas retirer votre propre rôle principal.';
+            elseif (!in_array($role, ['super_admin', 'editor'], true)) $err = 'Rôle invalide.';
+            else {
+                $target = $db->prepare('SELECT email FROM users WHERE id=?'); $target->execute([$targetId]); $targetEmail = (string)$target->fetchColumn();
+                if ($targetEmail !== '') {
+                    $db->prepare('UPDATE users SET role=? WHERE id=?')->execute([$role, $targetId]);
+                    activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Modification de rôle', $targetEmail . ' est maintenant ' . $role);
+                    $_SESSION['flash'] = 'Rôle utilisateur modifié.'; go($back);
+                }
+            }
+        }
         if ($a === 'backup') {
             $courses = $db->query('SELECT formation,day,hs,he,title,room FROM courses ORDER BY day,hs,formation')->fetchAll();
             $notes = $db->query('SELECT week,text FROM notes ORDER BY week')->fetchAll();
             $backup = ['format' => 'ndartech-edt-backup', 'version' => 1, 'exported_at' => date(DATE_ATOM), 'courses' => $courses, 'notes' => $notes];
             header('Content-Type: application/json; charset=utf-8');
             header('Content-Disposition: attachment; filename="ndartech-edt-backup-' . date('Y-m-d') . '.json"');
+            activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Téléchargement de sauvegarde', count($courses) . ' cours et ' . count($notes) . ' annonces exportés');
             echo json_encode($backup, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
             exit;
         }
@@ -108,6 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $insert->execute([$course['formation'], $course['day'], $course['hs'], $course['he'], $course['title'], $course['room']]);
                         }
                         $db->commit();
+                        activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Génération automatique', 'Planning généré pour neuf semaines à partir du ' . $w);
                         $_SESSION['flash'] = 'Planning automatique généré et vérifié pour neuf semaines.';
                         go($back);
                     }
@@ -173,14 +219,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $restoreNotes[] = [$week, $text];
                 }
                 if ($err === '') {
+                    $restoreManual = [];
+                    foreach ($restoreCourses as $course) {
+                        $restoreManual[] = ['formation' => $course[0], 'day' => $course[1], 'hs' => $course[2], 'he' => $course[3], 'title' => $course[4], 'room' => $course[5]];
+                    }
+                    $restoreErrors = validate_manual_schedule($restoreManual);
+                    if ($restoreErrors) $err = 'Restauration refusée : ' . implode(' ', $restoreErrors);
+                }
+                if ($err === '') {
                     $db->beginTransaction();
                     snapshot($db, 'Avant restauration');
-                    $db->exec('DELETE FROM courses; DELETE FROM notes;');
+                    $db->exec('DELETE FROM courses');
+                    $db->exec('DELETE FROM notes');
                     $insertCourse = $db->prepare('INSERT INTO courses(formation,day,hs,he,title,room) VALUES(?,?,?,?,?,?)');
                     foreach ($restoreCourses as $course) $insertCourse->execute($course);
                     $insertNote = $db->prepare('INSERT INTO notes(week,text) VALUES(?,?)');
                     foreach ($restoreNotes as $item) $insertNote->execute($item);
                     $db->commit();
+                    activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Restauration de sauvegarde', count($restoreCourses) . ' cours et ' . count($restoreNotes) . ' annonces restaurés');
                     $_SESSION['flash'] = 'Sauvegarde restaurée : ' . count($restoreCourses) . ' cours et ' . count($restoreNotes) . ' annonces.';
                     go($back);
                 }
@@ -234,6 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($txt === '') $db->prepare('DELETE FROM notes WHERE week=?')->execute([$w]);
                 else $db->prepare('REPLACE INTO notes(week,text) VALUES(?,?)')->execute([$w, $txt]);
                 $db->commit();
+                activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Modification du planning', 'Emploi du temps enregistré pour la semaine du ' . $w);
                 $_SESSION['flash'] = 'Emploi du temps enregistré.';
                 go($back);
             }
@@ -261,6 +318,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ins = $db->prepare('INSERT INTO courses(formation,day,hs,he,title,room) VALUES(?,?,?,?,?,?)');
                     foreach ($rows as $r) $ins->execute([$f, addd($r['day'], 7), $r['hs'], $r['he'], $r['title'], $r['room']]);
                     $db->commit();
+                    activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Copie de semaine', count($rows) . ' cours copiés de la semaine du ' . $p . ' vers le ' . $w);
                     $_SESSION['flash'] = 'Semaine copiée : ajustez puis enregistrez.';
                 }
             }
@@ -270,7 +328,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $u = $db->prepare('SELECT hash FROM users WHERE id=?'); $u->execute([$uid]); $new = (string)($_POST['new'] ?? '');
             if (!password_verify((string)($_POST['old'] ?? ''), (string)$u->fetchColumn())) $err = 'Mot de passe actuel incorrect.';
             elseif (strlen($new) < 10 || $new !== (string)($_POST['new2'] ?? '')) $err = 'Nouveau mot de passe : 10 caractères minimum, identique dans les deux champs.';
-            else { $db->prepare('UPDATE users SET hash=? WHERE id=?')->execute([password_hash($new, PASSWORD_DEFAULT), $uid]); session_regenerate_id(true); $_SESSION['flash'] = 'Mot de passe modifié.'; go($back); }
+            else { $db->prepare('UPDATE users SET hash=? WHERE id=?')->execute([password_hash($new, PASSWORD_DEFAULT), $uid]); activity($db, (int)$uid, (string)($account['email'] ?? ''), 'Modification du mot de passe', 'Mot de passe personnel modifié'); session_regenerate_id(true); $_SESSION['flash'] = 'Mot de passe modifié.'; go($back); }
         }
     }
 }
@@ -350,6 +408,27 @@ echo '<details class="snapshot-history"><summary>Restaurations rapides (' . coun
 if (!$snapshots) echo '<p>Aucune sauvegarde automatique pour le moment.</p>';
 foreach ($snapshots as $item) echo '<form method="post" class="snapshot-item" data-snapshot-restore>' . $tok . $ctx . '<input type="hidden" name="a" value="restore_snapshot"><input type="hidden" name="snapshot_id" value="' . (int)$item['id'] . '"><span><strong>' . h($item['action']) . '</strong><small>' . h($item['created_at']) . '</small></span><button class="btn s">Restaurer</button></form>';
 echo '</details>';
+if ($isSuperAdmin) {
+    $users = $db->query('SELECT id,email,role,last_login_at FROM users ORDER BY id')->fetchAll();
+    echo '<details class="security-panel"><summary>Gestion des comptes et rôles</summary>';
+    echo '<form method="post" class="box">' . $tok . $ctx . '<input type="hidden" name="a" value="add_user"><h3>Ajouter un utilisateur</h3>'
+        . '<label>Email<input type="email" name="email" required></label><label>Mot de passe (10 caractères minimum)<input type="password" name="new_password" minlength="10" required></label>'
+        . '<label>Rôle<select name="role"><option value="editor">Éditeur — peut gérer le planning</option><option value="super_admin">Super administrateur — tous les droits</option></select></label>'
+        . '<button class="btn pri">Créer le compte</button></form>';
+    echo '<div class="account-list"><h3>Comptes existants</h3>';
+    foreach ($users as $user) {
+        echo '<form method="post" class="snapshot-item">' . $tok . $ctx . '<input type="hidden" name="a" value="set_role"><input type="hidden" name="user_id" value="' . (int)$user['id'] . '">'
+            . '<span><strong>' . h($user['email']) . '</strong><small>' . ($user['last_login_at'] ? 'Dernière connexion : ' . h(substr((string)$user['last_login_at'], 0, 16)) : 'Jamais connecté') . '</small></span>'
+            . '<select name="role"><option value="editor"' . ($user['role'] === 'editor' ? ' selected' : '') . '>Éditeur</option><option value="super_admin"' . ($user['role'] === 'super_admin' ? ' selected' : '') . '>Super administrateur</option></select>'
+            . '<button class="btn s">Changer le rôle</button></form>';
+    }
+    echo '</div></details>';
+    $activityRows = $db->query('SELECT email,action,details,ip,created_at FROM activity_log ORDER BY id DESC LIMIT 50')->fetchAll();
+    echo '<details class="activity-panel"><summary>Journal de sécurité et des modifications</summary><div class="activity-list">';
+    if (!$activityRows) echo '<p>Aucune activité enregistrée.</p>';
+    foreach ($activityRows as $activityRow) echo '<article><strong>' . h($activityRow['action']) . '</strong><span>' . h($activityRow['email']) . ' · ' . h(substr((string)$activityRow['created_at'], 0, 16)) . '</span><p>' . h($activityRow['details']) . '</p><small>' . h($activityRow['ip']) . '</small></article>';
+    echo '</div></details>';
+}
 echo '<details><summary>Changer mon mot de passe</summary><form method="post" class="box">' . $tok . $ctx . '<input type="hidden" name="a" value="passwd">'
     . '<label>Mot de passe actuel<input type="password" name="old" autocomplete="current-password" required></label><label>Nouveau mot de passe<input type="password" name="new" minlength="10" autocomplete="new-password" required></label>'
     . '<label>Confirmer<input type="password" name="new2" minlength="10" autocomplete="new-password" required></label><p><button class="btn pri">Modifier</button></p></form></details>';

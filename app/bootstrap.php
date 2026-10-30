@@ -19,19 +19,42 @@ session_start();
 function db(): PDO {
     static $p = null;
     if (!$p) {
-        $dir = __DIR__ . '/../data';
-        if (!is_dir($dir)) mkdir($dir, 0750, true);
-        $p = new PDO('sqlite:' . $dir . '/edt.sqlite', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-        $p->exec("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, hash TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS courses(id INTEGER PRIMARY KEY, formation INTEGER NOT NULL, day TEXT NOT NULL, hs TEXT NOT NULL, he TEXT NOT NULL, title TEXT NOT NULL, room TEXT NOT NULL DEFAULT '');
-            CREATE INDEX IF NOT EXISTS i_courses ON courses(formation, day);
-            CREATE TABLE IF NOT EXISTS notes(week TEXT PRIMARY KEY, text TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS attempts(ip TEXT NOT NULL, at INTEGER NOT NULL);");
+        global $CFG;
+        $dbConfig = $CFG['db'] ?? ['driver' => 'sqlite'];
+        if (($dbConfig['driver'] ?? 'sqlite') === 'mysql') {
+            $dsn = 'mysql:host=' . $dbConfig['host'] . ';port=' . ($dbConfig['port'] ?? '3306') . ';dbname=' . $dbConfig['name'] . ';charset=utf8mb4';
+            $p = new PDO($dsn, (string)$dbConfig['user'], (string)$dbConfig['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+            $p->exec("CREATE TABLE IF NOT EXISTS users(id INT AUTO_INCREMENT PRIMARY KEY, email VARCHAR(190) NOT NULL UNIQUE, hash VARCHAR(255) NOT NULL, role VARCHAR(30) NOT NULL DEFAULT 'super_admin', last_login_at VARCHAR(35) NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $p->exec("CREATE TABLE IF NOT EXISTS courses(id INT AUTO_INCREMENT PRIMARY KEY, formation SMALLINT NOT NULL, day VARCHAR(10) NOT NULL, hs VARCHAR(5) NOT NULL, he VARCHAR(5) NOT NULL, title VARCHAR(120) NOT NULL, room VARCHAR(80) NOT NULL DEFAULT '', KEY i_courses(formation,day)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $p->exec("CREATE TABLE IF NOT EXISTS notes(week VARCHAR(10) PRIMARY KEY, text VARCHAR(500) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $p->exec("CREATE TABLE IF NOT EXISTS snapshots(id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(35) NOT NULL, action VARCHAR(120) NOT NULL, payload LONGTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $p->exec("CREATE TABLE IF NOT EXISTS attempts(ip VARCHAR(45) NOT NULL, at INT NOT NULL, KEY i_attempts(ip,at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            $p->exec("CREATE TABLE IF NOT EXISTS activity_log(id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NULL, email VARCHAR(190) NOT NULL, action VARCHAR(120) NOT NULL, details VARCHAR(1000) NOT NULL DEFAULT '', ip VARCHAR(45) NOT NULL DEFAULT '', created_at VARCHAR(35) NOT NULL, KEY i_activity(created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } else {
+            $dir = __DIR__ . '/../data';
+            if (!is_dir($dir)) mkdir($dir, 0750, true);
+            $p = new PDO('sqlite:' . $dir . '/edt.sqlite', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+            $p->exec("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'super_admin', last_login_at TEXT);
+                CREATE TABLE IF NOT EXISTS courses(id INTEGER PRIMARY KEY, formation INTEGER NOT NULL, day TEXT NOT NULL, hs TEXT NOT NULL, he TEXT NOT NULL, title TEXT NOT NULL, room TEXT NOT NULL DEFAULT '');
+                CREATE INDEX IF NOT EXISTS i_courses ON courses(formation, day);
+                CREATE TABLE IF NOT EXISTS notes(week TEXT PRIMARY KEY, text TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS attempts(ip TEXT NOT NULL, at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT NOT NULL, action TEXT NOT NULL, details TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS i_activity_log ON activity_log(created_at);");
+            $columns = [];
+            foreach ($p->query("PRAGMA table_info(users)") as $column) $columns[$column['name']] = true;
+            if (!isset($columns['role'])) $p->exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'super_admin'");
+            if (!isset($columns['last_login_at'])) $p->exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
+        }
     }
     return $p;
 }
 function h($s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+function activity(PDO $db, ?int $userId, string $email, string $action, string $details = ''): void {
+    $insert = $db->prepare('INSERT INTO activity_log(user_id,email,action,details,ip,created_at) VALUES(?,?,?,?,?,?)');
+    $insert->execute([$userId, $email, $action, $details, (string)($_SERVER['REMOTE_ADDR'] ?? ''), date(DATE_ATOM)]);
+}
 function monday(?string $d = null): string {
     $t = ($d && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) ? strtotime($d) : false;
     return date('Y-m-d', strtotime('monday this week', $t === false ? time() : $t));
@@ -228,7 +251,11 @@ function csrf(): string { return $_SESSION['csrf'] ??= bin2hex(random_bytes(32))
 function csrf_ok(): bool { $t = (string)($_SESSION['csrf'] ?? ''); return $t !== '' && hash_equals($t, (string)($_POST['csrf'] ?? '')); }
 function cut(string $s, int $n): string { return preg_match('/^.{0,' . $n . '}/su', $s, $m) ? $m[0] : substr($s, 0, $n); }
 function head(string $title): void {
-    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . h($title) . ' — NDARTECH</title><link rel="stylesheet" href="style.css?v=20261027-3"></head><body><div class="wrap"><header>'
+    $robots = $title === 'Administration' ? 'noindex, nofollow' : 'index, follow';
+    echo '<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . h($title) . ' — NDARTECH</title>'
+        . '<meta name="description" content="Consultez les emplois du temps des formations Bureautique, Développement web et Infographie proposés par NDARTECH.">'
+        . '<meta name="robots" content="' . $robots . '"><meta property="og:title" content="' . h($title) . ' — NDARTECH"><meta property="og:description" content="Emploi du temps des formations NDARTECH"><meta property="og:type" content="website">'
+        . '<meta property="og:image" content="image/Emploi du temps NDARTECH en couleurs.png"><link rel="stylesheet" href="style.css?v=20261029-3"></head><body><div class="wrap"><header>'
         . '<svg width="54" height="54" viewBox="0 0 100 100" aria-hidden="true"><path d="M38 14L62 28M46 34L75 52M46 34L30 62M62 28L46 56" fill="none" stroke="#1A6BB5" stroke-width="2"/><circle cx="36" cy="12" r="10" fill="#2B9CD8"/><circle cx="64" cy="27" r="6" fill="#2B9CD8"/><circle cx="47" cy="54" r="9" fill="#2B9CD8"/><circle cx="46" cy="33" r="7" fill="#1A6BB5"/><circle cx="76" cy="52" r="14" fill="#1A6BB5"/><circle cx="29" cy="68" r="16" fill="#1A6BB5"/></svg>'
         . '<div><h1>' . h($title) . '</h1><div class="sub">NDARTECH · Au cœur du numérique</div></div></header>';
 }
